@@ -1,0 +1,4 @@
+[default]
+entity: clarence-n-huang
+project: color-best-looking
+base_url: https://api.wandb.ai
