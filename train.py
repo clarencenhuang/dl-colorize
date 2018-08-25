@@ -17,7 +17,7 @@ from skimage.color import rgb2lab, lab2rgb, rgb2gray, xyz2lab
 from tqdm import tqdm
 import h5py
 import torch.utils.data as data
-from model import ColorizeClassifier, ResNextColorizeClassifier
+from models.model import ColorizeClassifier, ResNextColorizeClassifier
 from color_utils import ColorLoss, lab2pil, ab2bin, bin2ab, idx_to_lab
 from dataset import (torch_softmax2image, hd52numpy, hd52numpy, img2hdf5, 
      ColorizeHD5Dataset,CategoricalColorizeDataSet )
@@ -26,8 +26,8 @@ import wandb
 wandb.init()
 
 
-train_dir = '/home/ec2-user/data/train/'#lukas'
-test_dir = '/home/ec2-user/data/test/'#lukas'
+train_dir = '/home/ec2-user/data/train/lukas'
+test_dir = '/home/ec2-user/data/test/lukas'
 
 
 ds_train = CategoricalColorizeDataSet(train_dir,  transform=transforms.Compose([
@@ -88,16 +88,19 @@ def get_validation_error(model):
 
 def train(model, optimizer, criterion, epochs=10, lrs=None):
     val_loss, t_loss = [], []
-    best_loss_so_far = 10000000.0
+    best_loss_so_far = float('inf')
+    
+    rloss, uloss = 0.0, 0.0
+    rcount = 0
+    
     for e in range(epochs):
         print(f"epoch: {e}")
-        running_loss = 0.0
-        running_num = 1e-8
+        
         if lrs is not None: lrs.step()
         pbar = tqdm(train_loader)
             
         for inputs, labels in pbar:
-            pbar.set_description(f"loss: {running_loss/running_num}")
+            pbar.set_description(f"loss: {uloss}")
             model.train()
             inputs, labels = inputs.to('cuda'), labels.to('cuda') 
 
@@ -108,12 +111,14 @@ def train(model, optimizer, criterion, epochs=10, lrs=None):
             loss.backward()
             optimizer.step()
             
-            running_loss += loss.item() * inputs.shape[0]
-            running_num += inputs.shape[0]
-        tloss = running_loss/running_num
+            if rcount < 1000000:
+                rcount += 1
+            rloss = 0.9*rloss + 0.1*loss.item()
+            uloss = rloss / (1 - 0.9**rcount)
+            
         vloss = get_validation_error(model)
         val_loss.append(vloss)
-        t_loss.append(tloss)
+        t_loss.append(uloss)
         torch.save({
             'epoch': e + 1,
             'state_dict': model.state_dict(),
@@ -121,7 +126,7 @@ def train(model, optimizer, criterion, epochs=10, lrs=None):
         }, f"epoch_{e}.pth")
         
         # wandb log loss
-        wandb.log({'epoch': e + 1, 'loss': tloss, 'val_loss': vloss})
+        wandb.log({'epoch': e + 1, 'loss': uloss, 'val_loss': vloss})
         
         if vloss < best_loss_so_far:
             best_loss_so_far = vloss
@@ -140,14 +145,18 @@ def save_files_to_wandb():
         
 
 if __name__ == '__main__':
-    model = ResNextColorizeClassifier() #ColorizeClassifier(feature_cascade=(512, 256, 64, 64))
+    model = ResNextColorizeClassifier(training='imagenet') #ColorizeClassifier(feature_cascade=(512, 256, 64, 64))
     model.freeze_ft()
-    model.cuda()
+    print(f"number of cuda devices is {torch.cuda.device_count()}"
+    if torch.cuda.device_count() > 1:
+        model = torch.nn.DataParallel(model).cuda()
+    else:
+        model.cuda()
     
     optimizer = optim.Adam(model.parameters(), lr=0.002)
     lrs = optim.lr_scheduler.StepLR(optimizer, step_size=3, gamma=0.1)
     criterion = ColorLoss(torch.FloatTensor(color_weights).cuda())
-    epochs = 10
+    epochs = 3
     wandb.config.epochs = epochs
     wandb.config.batch_size = 16
     wandb.config.width = 256

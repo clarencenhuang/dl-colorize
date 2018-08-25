@@ -6,7 +6,7 @@ import models.resnext as resnext
 
 class ColorizeClassifier(nn.Module):
     '''This produce the nicest looking images'''
-    def __init__(self, feature_cascade=(256, 128, 64, 32), classes=262, training=True):
+    def __init__(self, feature_cascade=(256, 128, 64, 32, 16), classes=262, training=True):
         super(ColorizeClassifier, self).__init__()
         fc = feature_cascade
         self.upsample = nn.Upsample(scale_factor=2)
@@ -14,6 +14,8 @@ class ColorizeClassifier(nn.Module):
         resnet = models.resnet101(pretrained=training)
         resnet.conv1.weight = nn.Parameter(resnet.conv1.weight.sum(dim=1).unsqueeze(1).data)
         res_children = list(resnet.children())
+        
+        n_shortcut = 16
         
         self.ft1 = nn.Sequential(*res_children[0:3]) #64 filters,
         self.ft2 = nn.Sequential(*res_children[3:5]) # 256 filters
@@ -35,8 +37,15 @@ class ColorizeClassifier(nn.Module):
         self.bn1 = nn.BatchNorm2d(sum1)
         self.conv1 = nn.Conv2d(sum1, fc[3], kernel_size=3, stride=1, padding=1)
         
-        self.bn0 = nn.BatchNorm2d(fc[3])
-        self.conv0 = nn.Conv2d(fc[3], classes, kernel_size=3, stride=1, padding=1)
+        sum0 = fc[3] + 2 * n_shortcut
+        self.bn0 = nn.BatchNorm2d(sum0)
+        self.conv0 = nn.Conv2d(sum0, fc[4], kernel_size=3, stride=1, padding=1)
+        
+        
+        
+
+        
+        
         
     def freeze_ft(self):
         for ft in (self.ft1, self.ft2, self.ft3, self.ft4):
@@ -56,6 +65,9 @@ class ColorizeClassifier(nn.Module):
     
         
     def forward(self, x):
+        
+        
+        
         x1 = self.ft1(x)
         x2 = self.ft2(x1)
         x3 = self.ft3(x2)
@@ -86,10 +98,15 @@ class ColorizeClassifier(nn.Module):
         x = self.conv1(x)
         x = F.relu(x)
         
-        
         x = self.upsample(x)
-        x = self.bn0(x)
+        x = torch.cat((x, s1, s3), dim=1)
+                               
+        x = self.bn0(x)       
         x = self.conv0(x)
+        x = F.relu(x)
+        
+        x = self.conv_final(x)              
+                               
         return x
       
 class ColorizeRegressor(ColorizeClassifier):
@@ -105,13 +122,14 @@ class ColorizeRegressor(ColorizeClassifier):
     
 class ResNextColorizeClassifier(nn.Module):
     '''This produce the nicest looking images'''
-    def __init__(self, feature_cascade=(512, 256, 64, 32), classes=262, training=None):
+    def __init__(self, feature_cascade=(512, 256, 64, 32, 32), classes=262, training=None):
         super(ResNextColorizeClassifier, self).__init__()
         fc = feature_cascade
         self.upsample = nn.Upsample(scale_factor=2)
         fe = (1024, 512, 256, 64)
-        
-        resnet = resnext.resnext101_64x4d(pretrained=None)
+        n_shortcut = 8
+                               
+        resnet = resnext.resnext101_64x4d(pretrained=training)
         resnet.features[0].weight = nn.Parameter(resnet.features[0].weight.sum(dim=1).unsqueeze(1).data)
         res_children = list(resnet.features.children())
         
@@ -135,8 +153,17 @@ class ResNextColorizeClassifier(nn.Module):
         self.bn1 = nn.BatchNorm2d(sum1)
         self.conv1 = nn.Conv2d(sum1, fc[3], kernel_size=3, stride=1, padding=1)
         
+        #sum0 = fc[3] + n_shortcut
         self.bn0 = nn.BatchNorm2d(fc[3])
         self.conv0 = nn.Conv2d(fc[3], classes, kernel_size=3, stride=1, padding=1)
+                               
+        #self.bn_final = nn.BatchNorm2d(fc[4])
+        #self.conv_final = nn.Conv2d(fc[4], classes, kernel_size=3, stride=1, padding=1)                       
+                               
+        #self.short_conv_1 = nn.Conv2d(1, n_shortcut, kernel_size=1, stride=1)
+        #self.short_conv_3 = nn.Conv2d(1, n_shortcut, kernel_size=3, stride=1, padding=1)
+                               
+        
         
     def freeze_ft(self):
         for ft in (self.ft1, self.ft2, self.ft3, self.ft4):
@@ -156,6 +183,9 @@ class ResNextColorizeClassifier(nn.Module):
     
         
     def forward(self, x):
+        #s1 = self.short_conv_1(x)
+        #s3 = self.short_conv_3(x)
+        
         x1 = self.ft1(x)
         x2 = self.ft2(x1)
         x3 = self.ft3(x2)
@@ -186,8 +216,12 @@ class ResNextColorizeClassifier(nn.Module):
         x = self.conv1(x)
         x = F.relu(x)
         
-        
         x = self.upsample(x)
-        x = self.bn0(x)
+        #x = torch.cat((x, s3), dim=1)
+                               
+        x = self.bn0(x)       
         x = self.conv0(x)
+        #x = F.relu(x)
+        
+        #x = self.conv_final(x)  
         return x
