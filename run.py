@@ -11,7 +11,7 @@ import argparse
 import torch
 from PIL import Image, ImageOps
 import numpy as np
-from model import ColorizeClassifier
+from models.model import ResNextColorizeClassifier
 from color_utils import torch_softmax2image
 
 parser = argparse.ArgumentParser(description='Run model file on input_image file and output out_image.')
@@ -25,7 +25,7 @@ width=256
 args = parser.parse_args()
 
 train_state = torch.load(args.model)
-model = ColorizeClassifier(feature_cascade=(512, 256, 64, 64), training=False)
+model = ResNextColorizeClassifier(training=None)
 model.load_state_dict(train_state['state_dict'])
 
 img = Image.open(args.input_image)

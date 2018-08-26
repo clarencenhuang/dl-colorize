@@ -118,7 +118,7 @@ class ColorizeRegressor(ColorizeClassifier):
         x = super(ColorizeRegressor, self).forward(x)
         x = F.tanh(x)
         return x
-    
+
     
 class ResNextColorizeClassifier(nn.Module):
     '''This produce the nicest looking images'''
@@ -140,6 +140,7 @@ class ResNextColorizeClassifier(nn.Module):
         
         self.bn4 = nn.BatchNorm2d(fe[0])
         self.conv4 = nn.Conv2d(fe[0], fc[0], kernel_size=3, stride=1, padding=1)
+        
         
         sum3 = fc[0] + fe[1]
         self.bn3 = nn.BatchNorm2d(sum3)
