@@ -1,4 +1,5 @@
 import numpy as np
+import shutil
 import pandas as pd
 
 import torch
@@ -26,16 +27,16 @@ import wandb
 wandb.init()
 
 
-train_dir = '/home/ec2-user/data/train/'
+train_dir = '/home/ec2-user/data/train/aggregate/'
 test_dir = '/home/ec2-user/data/test/lukas'
 
-val_bs = 16
+val_bs = 12
 ds_train = CategoricalColorizeDataSet(train_dir,  transform=transforms.Compose([
                             transforms.RandomRotation(15, expand=False),
                             transforms.RandomResizedCrop(256),
                             transforms.RandomHorizontalFlip(),
                            ]))
-train_loader = data.DataLoader(ds_train,batch_size=16, shuffle=True, num_workers=6)
+train_loader = data.DataLoader(ds_train,batch_size=12, shuffle=True, num_workers=8)
 ds_test = CategoricalColorizeDataSet(test_dir,  transform=transforms.Compose([
                             transforms.Resize(299),
                             transforms.CenterCrop(256),
@@ -50,7 +51,6 @@ def log_wandb_images(inputs, labels, output, idx):
     input_images = []
     output_images = []
     reference_images = []
-    
     inps_cpu = inputs.cpu().numpy()
     for i in range(inps_cpu.shape[0]):
         x = inps_cpu[i,0,:,:]
@@ -69,15 +69,14 @@ def get_validation_error(model):
     model.eval()
     loss = 0.0
     num = 0
-    idx = 0
-    for inputs, labels in test_loader:
+    idx = np.random.choice(range(len(test_loader)))
+    for i, (inputs, labels) in enumerate(test_loader):
         inputs, labels = inputs.to('cuda'), labels.to('cuda')
         with torch.no_grad():
             a_out = model(inputs)
         # we only log stuff to wandb on first iteration
-        if idx < 2:
+        if idx == i:
             log_wandb_images(inputs, labels, a_out, idx)
-            idx += 1
         _, yh = torch.max(a_out, 1)
         soft_output = y_soft_encode[labels].permute(0,3,1,2)
         
@@ -88,7 +87,7 @@ def get_validation_error(model):
     print(f"Validation Loss: {loss/num}")
     return loss/num
 
-def train(model, optimizer, criterion, epochs=10, lrs=None, report_every=1000):
+def train(model, optimizer, criterion, epochs=10, lrs=None, report_every=100):
     val_loss, t_loss = [], []
     best_loss_so_far = float('inf')
     
@@ -145,20 +144,28 @@ def train(model, optimizer, criterion, epochs=10, lrs=None, report_every=1000):
     return pd.DataFrame({'loss': val_loss, 't_loss': t_loss})
 
 def save_files_to_wandb():
-    files_to_copy = ['best_so_far.pth', 'color_utils.py', 'run.py']
+    os.mkdir(os.path.join(wandb.run.dir, 'trained_models'))
+    files_to_copy = ['trained_models/best_so_far.pth', 'color_utils.py', 'run.py', 'models', 'README.md']
     for fname in files_to_copy:
-        filepath = os.path.join(wandb.run.dir, 'fname')
+        dest_path = os.path.join(wandb.run.dir, fname)
+        if os.path.isdir(fname):
+            shutil.copytree(fname, dest_path)
+        else:
+            shutil.copy2(fname, dest_path)          
         
 
 if __name__ == '__main__':
-    model = ResNextColorizeClassifier(training='imagenet') #ColorizeClassifier(feature_cascade=(512, 256, 64, 64))
-    model.freeze_ft()
+    model = ResNextColorizeClassifier(training=None) #ColorizeClassifier(feature_cascade=(512, 256, 64, 64))
+    state = torch.load('trained_models/resnext-frozen-imagenet.pth')
+    model.load_state_dict(state['state_dict'])
+    
+    #model.freeze_ft()
     model.cuda()
-    optimizer = optim.Adam(model.parameters(), lr=0.002)
-    lrs = optim.lr_scheduler.StepLR(optimizer, step_size=3, gamma=0.1)
+    optimizer = optim.Adam(model.parameters(), lr=0.0001)
+    lrs = optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.1)
     criterion = ColorLoss(torch.FloatTensor(color_weights).cuda())
-    epochs = 3
-    wandb.config.epochs = epochs*1000
+    epochs = 8
+    wandb.config.epochs = epochs
     wandb.config.batch_size = 16
     wandb.config.width = 256
     wandb.config.height = 256
